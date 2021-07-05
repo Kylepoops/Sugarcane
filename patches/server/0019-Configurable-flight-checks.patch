@@ -28,19 +28,27 @@ index 304b354b66d2be5465c7a006d74b2a974c906101..963a76583ce4c136116c921d60a6b37b
                      this.disconnect(com.destroystokyo.paper.PaperConfig.flyingKickVehicleMessage, org.bukkit.event.player.PlayerKickEvent.Cause.FLYING_VEHICLE); // Paper - use configurable kick message & kick event cause
                      return;
 diff --git a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-index 15eb829f7eb5a270cd3347f8b6183505ad67cfe4..7ec593a8223543ea589aa8268228bebf508be876 100644
+index 3d8fca7f3c64f4b28c0ff602c11563f00b0babfa..683efd938a2de6c9a8626394547701ec05d734d6 100644
 --- a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
 +++ b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-@@ -204,4 +204,11 @@ private static void disableEntityStuckChecks() {
- private static void brandName() {
- 	brandName = getString("brand-name", brandName);
-     }
+@@ -107,6 +107,8 @@ public class SugarcaneConfig {
+ 	public static String brandName;
+ 	public static boolean fixProtocolLib;
+ 	public static boolean logPlayerLoginLoc;
++	public static boolean checkFlying;
++	public static boolean checkVehicleFlying;
+ 
+ 	private static void settings() {
+ 		config.setComment("brand-name", "Here you can set what should your server display as it's brand name", "NOTE: This settings overrides the purpur's server-mod-name setting");
+@@ -130,4 +132,10 @@ public class SugarcaneConfig {
+ 
+ 		logPlayerLoginLoc = config.getBoolean("logging.log-player-login-location", true);
+ 	}
 +
-+    public static boolean checkFlying = true;
-+    public static boolean checkVehicleFlying = true;
-+    private static void flightChecks() {
-+        checkFlying = getBoolean("settings.checks.flight", checkFlying);
-+        checkVehicleFlying = getBoolean("settings.checks.vehicle-flight", checkVehicleFlying);
-+    }
++	private static void flightChecks() {
++		checkFlying = config.getBoolean("checks.flight", true);
++
++		checkVehicleFlying = config.getBoolean("checks.vehicle-flight", true);
++	}
  }
 \ No newline at end of file

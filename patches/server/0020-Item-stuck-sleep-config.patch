@@ -19,17 +19,26 @@ index f6b9f56076bd6aa2d912deacef0dff75a5ac01f4..908ec2bc4f6dfe359077d09b7355b26c
                      return true;
                  });
 diff --git a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-index 7ec593a8223543ea589aa8268228bebf508be876..604b1fa59c6228971c75b1e5988789655df47946 100644
+index 683efd938a2de6c9a8626394547701ec05d734d6..9955a79ae36ee20092588d8b0c59208cea7b422c 100644
 --- a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
 +++ b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-@@ -211,4 +211,9 @@ private static void brandName() {
-         checkFlying = getBoolean("settings.checks.flight", checkFlying);
-         checkVehicleFlying = getBoolean("settings.checks.vehicle-flight", checkVehicleFlying);
-     }
+@@ -109,6 +109,7 @@ public class SugarcaneConfig {
+ 	public static boolean logPlayerLoginLoc;
+ 	public static boolean checkFlying;
+ 	public static boolean checkVehicleFlying;
++	public static int itemStuckSleepTicks;
+ 
+ 	private static void settings() {
+ 		config.setComment("brand-name", "Here you can set what should your server display as it's brand name", "NOTE: This settings overrides the purpur's server-mod-name setting");
+@@ -138,4 +139,10 @@ public class SugarcaneConfig {
+ 
+ 		checkVehicleFlying = config.getBoolean("checks.vehicle-flight", true);
+ 	}
 +
-+    public static int itemStuckSleepTicks = 1;
-+    private static void itemStuckSleepTicks() {
-+        itemStuckSleepTicks = getInt("settings.itemStuckSleepTicks", 1);
-+    }
++	private static void itemStuckSleepTicks() {
++		config.setComment("item", "The setting below controls how often a dropped item checks rather it's stuck inside a block (their most expansive operation)", "Higher values like 15 can be safely used and greatly improves dropped item", "if your server has thousands of them (from big farms/TNT/farming players etc).");
++
++		itemStuckSleepTicks = config.getInt("item.item-stuck-sleep-ticks", 1);
++	}
  }
 \ No newline at end of file

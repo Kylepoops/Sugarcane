@@ -26,17 +26,26 @@ index 6b78b1d6ac2ede431cbef107ee7e322296051cd2..e13fe23d60d196733f5acb82aafee116
  
      public void updateEntireScoreboard(ServerScoreboard scoreboard, ServerPlayer player) {
 diff --git a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-index 197a5f5aaf2adfab79005d1acc6d26039f7239bb..dc2f698ea72cb32bf4714d95b3e31f8b76c2dae0 100644
+index af82dc8844286f54cb2e1023b6b793f5bf00d7f2..3d8fca7f3c64f4b28c0ff602c11563f00b0babfa 100644
 --- a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
 +++ b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-@@ -170,6 +170,10 @@ public class SugarcaneConfig {
- 		return config.getString(path, config.getString(path));
- }
+@@ -106,6 +106,7 @@ public class SugarcaneConfig {
+ 	public static boolean disableEntityStuckChecks;
+ 	public static String brandName;
+ 	public static boolean fixProtocolLib;
++	public static boolean logPlayerLoginLoc;
  
-+public static boolean logPlayerLoginLoc = true;
-+	private static void general() {
-+		logPlayerLoginLoc = getBoolean("settings.log-player-login-location", logPlayerLoginLoc);
+ 	private static void settings() {
+ 		config.setComment("brand-name", "Here you can set what should your server display as it's brand name", "NOTE: This settings overrides the purpur's server-mod-name setting");
+@@ -123,4 +124,10 @@ public class SugarcaneConfig {
+ 
+ 		fixProtocolLib = config.getBoolean("protocolLib.fix-protocollib", true);
+ 	}
++
++	private static void miscSettings() {
++		config.setComment("logging", "Here you can configure some logging settings below");
++
++		logPlayerLoginLoc = config.getBoolean("logging.log-player-login-location", true);
 +	}
- 	public static boolean fixProtocolLib = true;
- 	private static void protocolLib() {
- 		fixProtocolLib = getBoolean("settings.fix-protocollib", fixProtocolLib);
+ }
+\ No newline at end of file

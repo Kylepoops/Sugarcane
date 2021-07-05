@@ -3,41 +3,19 @@ From: tr7zw <tr7zw@live.de>
 Date: Wed, 5 Aug 2020 08:05:10 -0500
 Subject: [PATCH] Sugarcane configuration
 
-From Yatopia
-also some basic settings that dont deserve a patch
+also some basic settings that dont deserve a patch from Yatopia
 
-diff --git a/src/main/java/co/aikar/timings/TimingsExport.java b/src/main/java/co/aikar/timings/TimingsExport.java
-index 33263af33b4355e5079fadfcfae77d038aebd2c4..832ebb16b775149486d06807dd0b576475dd7c15 100644
---- a/src/main/java/co/aikar/timings/TimingsExport.java
-+++ b/src/main/java/co/aikar/timings/TimingsExport.java
-@@ -233,8 +233,9 @@ public class TimingsExport extends Thread {
-             pair("bukkit", mapAsJSON(Bukkit.spigot().getBukkitConfig(), null)),
-             pair("paper", mapAsJSON(Bukkit.spigot().getPaperConfig(), null)), // Tuinity - add config to timings report
-             pair("tuinity", mapAsJSON(Bukkit.spigot().getTuinityConfig(), null)), // Tuinity - add config to timings report
--            pair("purpur", mapAsJSON(Bukkit.spigot().getPurpurConfig(), null))
-+            pair("purpur", mapAsJSON(Bukkit.spigot().getPurpurConfig(), null)),
-             // Purpur end
-+            pair("sugarcane", mapAsJSON(Bukkit.spigot().getSugarcaneConfig(), null)) // Sugarcane - add config to timings report
-         ));
- 
-         new TimingsExport(listeners, parent, history).start();
 diff --git a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
-index b58fc5c39d5cf3b88c61c0bfc55d2e98385bdaeb..39e0e33cdd125e87688d2e82c1c20306aab72bbe 100644
+index b58fc5c39d5cf3b88c61c0bfc55d2e98385bdaeb..2d094c88261412fb71f26fdebd5708eb50f6feb1 100644
 --- a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
 +++ b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
-@@ -234,7 +234,14 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+@@ -234,7 +234,8 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
          com.tuinity.tuinity.config.TuinityConfig.init((java.io.File) options.valueOf("tuinity-settings")); // Tuinity - Server Config
          gg.airplane.AirplaneConfig.load(); // Airplane - config
          gg.airplane.commands.AirplaneCommands.init(); // Airplane - command
 -
-+        // Sugarcane start
-+        try {
-+            org.sugarcanemc.sugarcane.config.SugarcaneConfig.init((java.io.File) options.valueOf("sugarcane-settings"));
-+        } catch (Exception e) {
-+            DedicatedServer.LOGGER.error("Unable to load server configuration", e);
-+            return false;
-+        }
-+        // Sugarcane end
++        org.sugarcanemc.sugarcane.config.SugarcaneConfig.load(); // Sugarcane - config
++        org.sugarcanemc.sugarcane.command.SugarcaneCommandsManager.registerCommands(); // Sugarcane - command
          this.setPvpAllowed(dedicatedserverproperties.pvp);
          this.setFlightAllowed(dedicatedserverproperties.allowFlight);
          this.setResourcePack(dedicatedserverproperties.resourcePack, this.getPackHash());
@@ -96,150 +74,90 @@ index ee4fa43be982b686d5ba84989793def5c0d27dd2..1ebe7da8dfdd7771ec78da80eea51d3c
  
          if (this.fireImmune() || this.level.isClientSide) {
              this.clearFire();
-diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-index 70b272120a2c283e9fe809b4b2389caaffce3d02..e8551dbb714019d20fb0a9b087690f3127861374 100644
---- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-+++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-@@ -871,6 +871,7 @@ public final class CraftServer implements Server {
-             this.playerList.getBans().load();
-         } catch (IOException ex) {
-             this.logger.log(Level.WARNING, "Failed to load banned-players.json, " + ex.getMessage());
-+            org.sugarcanemc.sugarcane.config.SugarcaneConfig.init((File) console.options.valueOf("sugarcane-settings")); // Sugarcane
-         }
- 
-         org.spigotmc.SpigotConfig.init((File) console.options.valueOf("spigot-settings")); // Spigot
-@@ -2410,6 +2411,13 @@ public final class CraftServer implements Server {
-             org.spigotmc.RestartCommand.restart();
-         }
- 
-+        // Sugarcane start
-+        @Override
-+        public YamlConfiguration getSugarcaneConfig() {
-+            return org.sugarcanemc.sugarcane.config.SugarcaneConfig.config;
-+        }
-+        // Sugarcane end
+diff --git a/src/main/java/org/sugarcanemc/sugarcane/command/SugarcaneCommandsManager.java b/src/main/java/org/sugarcanemc/sugarcane/command/SugarcaneCommandsManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..069ed5f6f457340add1822177d95c6f0e70aa029
+--- /dev/null
++++ b/src/main/java/org/sugarcanemc/sugarcane/command/SugarcaneCommandsManager.java
+@@ -0,0 +1,19 @@
++package org.sugarcanemc.sugarcane.command;
 +
-         @Override
-         public void broadcast(BaseComponent component) {
-             for (Player player : CraftServer.this.getOnlinePlayers()) {
-diff --git a/src/main/java/org/bukkit/craftbukkit/Main.java b/src/main/java/org/bukkit/craftbukkit/Main.java
-index 01ca38ee35f2c1e5031ea4b8aca09a2a59c4a475..32d661358b955fd37cb2a5313eb4f2c4aedc477d 100644
---- a/src/main/java/org/bukkit/craftbukkit/Main.java
-+++ b/src/main/java/org/bukkit/craftbukkit/Main.java
-@@ -162,6 +162,14 @@ public class Main {
-                     .describedAs("Yml file");
-                 // Purpur end
- 
-+                // Sugarcane start
-+                acceptsAll(asList("sugarcane", "sugarcane-settings"), "File for Sugarcane settings")
-+                        .withRequiredArg()
-+                        .ofType(File.class)
-+                        .defaultsTo(new File("sugarcane.yml"))
-+                        .describedAs("Yml file");
-+                // Sugarcane end
++import java.util.Map;
++import java.util.HashMap;
++import org.bukkit.command.Command;
++import net.minecraft.server.MinecraftServer;
 +
-                 // Paper start
-                 acceptsAll(asList("server-name"), "Name of the server")
-                         .withRequiredArg()
++public class SugarcaneCommandsManager {
++	private static Map<String, Command> commands;
++
++	static {
++		commands = new HashMap<>();
++		commands.put("nspt", new NSPTCommand("nspt"));
++	}
++
++	public static void registerCommands() {
++			MinecraftServer.getServer().server.getCommandMap().register("nspt", "Sugarcane", new NSPTCommand("nspt"));
++	}
++}
 diff --git a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c759480cefb206e1acb3df8f9199cabd21fcee0
+index 0000000000000000000000000000000000000000..43d1d720980450a00d3743ecbda3a79b680b4723
 --- /dev/null
 +++ b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,119 @@
 +package org.sugarcanemc.sugarcane.config;
 +
 +import com.google.common.base.Throwables;
 +import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
 +import java.io.IOException;
 +import java.lang.reflect.InvocationTargetException;
 +import java.lang.reflect.Method;
 +import java.lang.reflect.Modifier;
 +import java.util.List;
 +import java.util.concurrent.TimeUnit;
-+import java.util.logging.Level;
 +import java.util.regex.Pattern;
 +import org.bukkit.Bukkit;
-+import org.bukkit.configuration.InvalidConfigurationException;
-+import org.bukkit.configuration.file.YamlConfiguration;
++import co.technove.air.AIR;
++import net.minecraft.server.MinecraftServer;
++import org.apache.logging.log4j.Level;
++import org.bukkit.command.SimpleCommandMap;
++
 +public class SugarcaneConfig {
-+	public static File CONFIG_FILE;
-+	private static final String HEADER = "This is the main configuration file for Sugarcane.\n"
-+			+ "Sugarcane contains many breaking changes and settings, so know what you are doing!\n"
-+			+ "You have been warned!\n";
-+	/*========================================================================*/
-+	public static YamlConfiguration config;
-+    public static int version; // since we're remapping sidestreams' configs we need this public
-+    public static boolean verbose; // since we're remapping sidestreams' configs we need this public
-+    /*========================================================================*/
 +
-+	public static void init(File configFile) {
-+		CONFIG_FILE = configFile;
-+		config = new YamlConfiguration();
-+		try {
-+			config.load(CONFIG_FILE);
-+		} catch (IOException ex) {
-+		} catch (InvalidConfigurationException ex) {
-+			Bukkit.getLogger().log(Level.SEVERE, "Could not load sugarcane.yml, please correct your syntax errors", ex);
-+			throw Throwables.propagate(ex);
-+		}
-+		config.options().header(HEADER);
-+		config.options().copyDefaults(true);
-+		verbose = getBoolean("verbose", false);
-+		version = getInt("config-version", 1);
-+		set("config-version", 1);
-+		removeLeftovers();
-+		readConfig(SugarcaneConfig.class, null);
-+	}
++	private static AIR config;
 +
-+	private static void removeLeftovers() {
-+		// this method is only to remove non-used values in the config
++	public static void load() throws IOException {
++		File configFile = new File("sugarcane.air");
++		if (configFile.exists()) {
++			try (FileInputStream inputStream = new FileInputStream(configFile)) {
++				config = new AIR(inputStream);
++			}
++		} else {
++			config = new AIR();
++		}
 +
-+		// leftover from rainforest
-+		if (config.get("world-settings") != null) {
-+			set("world-settings", null);
-+		}
-+		if (config.get("allow-player-item-duplication") != null) {
-+			set("allow-player-item-duplication", null);
-+		}
-+		if (config.get("allow-ridable-chestable-duping") != null) {
-+			set("allow-ridable-chestable-duping", null);
-+		}
-+		if (config.get("allow-sand-duping") != null) {
-+			set("allow-sand-duping", null);
-+		}
-+	}
++		config.setComment("info",
++		"This is the main configuration file for Sugarcane.",
++		"Sugarcane contains many breaking changes and settings, so know what you are doing!",
++		"You have been warned!",
++		"Join our Discord to receive support & optimization help: https://sugarcanemc.org/discord");
++	  config.getString("info.version", "1.0");
 +
-+	protected static void logError(String s) {
-+		Bukkit.getLogger().severe(s);
-+	}
-+
-+	protected static void log(String s) {
-+		if (verbose) {
-+			Bukkit.getLogger().info(s);
-+		}
-+	}
-+
-+	static void readConfig(Class<?> clazz, Object instance) {
-+		for (Method method : clazz.getDeclaredMethods()) {
-+			if (Modifier.isPrivate(method.getModifiers())) {
-+				if (method.getParameterTypes().length == 0 && method.getReturnType() == Void.TYPE) {
-+					try {
-+						method.setAccessible(true);
-+						method.invoke(instance);
-+					} catch (InvocationTargetException ex) {
-+						throw Throwables.propagate(ex.getCause());
-+					} catch (Exception ex) {
-+						Bukkit.getLogger().log(Level.SEVERE, "Error invoking " + method, ex);
-+					}
++		for (Method method : SugarcaneConfig.class.getDeclaredMethods()) {
++			if (Modifier.isStatic(method.getModifiers()) && Modifier.isPrivate(method.getModifiers())) {
++				method.setAccessible(true);
++				try {
++					method.invoke(null);
++				} catch (Throwable t) {
++					MinecraftServer.LOGGER.log(Level.WARN, "Failed to load configuration option from " + method.getName(), t);
 +				}
 +			}
 +		}
 +
-+		try {
-+			config.save(CONFIG_FILE);
-+		} catch (IOException ex) {
-+			Bukkit.getLogger().log(Level.SEVERE, "Could not save " + CONFIG_FILE, ex);
++		try (FileOutputStream outputStream = new FileOutputStream(configFile)) {
++			config.save(outputStream);
 +		}
 +	}
 +
@@ -292,48 +210,18 @@ index 0000000000000000000000000000000000000000..1c759480cefb206e1acb3df8f9199cab
 +		return time;
 +}
 +
-+	private static void set(String path, Object val) {
-+	config.set(path, val);
-+}
++	public static boolean disableEntityStuckChecks;
++	public static String brandName;
 +
-+	private static boolean getBoolean(String path, boolean def) {
-+	config.addDefault(path, def);
-+		return config.getBoolean(path, config.getBoolean(path));
-+}
++	private static void settings() {
++		config.setComment("brand-name", "Here you can set what should your server display as it's brand name", "NOTE: This settings overrides the purpur's server-mod-name setting");
 +
-+	private static double getDouble(String path, double def) {
-+	 config.addDefault(path, def);
-+		return config.getDouble(path, config.getDouble(path));
-+}
++		brandName = config.getString("brand-name.brand-name", "Sugarcane");
 +
-+	private static float getFloat(String path, float def) {
-+	 // TODO: Figure out why getFloat() always returns the default value.
-+		return (float) getDouble(path, (double) def);
-+}
++		config.setComment("checks", "Here you can enable or disable some checks that are listed below");
 +
-+	private static int getInt(String path, int def) {
-+	config.addDefault(path, def);
-+		return config.getInt(path, config.getInt(path));
-+}
++		disableEntityStuckChecks = config.getBoolean("checks.disable-entity-stuck-checks", false);
 +
-+	private static <T> List<T> getList(String path, List<T> def) {
-+	config.addDefault(path, def);
-+		return (List<T>) config.getList(path, config.getList(path));
-+}
-+
-+	private static String getString(String path, String def) {
-+	config.addDefault(path, def);
-+		return config.getString(path, config.getString(path));
-+}
-+
-+	public static boolean disableEntityStuckChecks = false;
-+private static void disableEntityStuckChecks() {
-+	disableEntityStuckChecks = getBoolean("settings.disableEntityStuckChecks", false);
-+}
-+
-+	public static String brandName = "Sugarcane";
-+private static void brandName() {
-+	brandName = getString("brand-name", brandName);
-+    }
++	}
 +}
 \ No newline at end of file
