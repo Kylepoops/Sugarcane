@@ -1,0 +1,2019 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Toffikk <slodkitofik@gmail.com>
+Date: Mon, 5 Jul 2021 16:18:20 +0200
+Subject: [PATCH] Port FerriteCore
+
+
+diff --git a/src/main/java/com/google/common/collect/FerriteCoreEntrySetAccess.java b/src/main/java/com/google/common/collect/FerriteCoreEntrySetAccess.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..85fef015d5667d813900bd72c8178bfe432241e6
+--- /dev/null
++++ b/src/main/java/com/google/common/collect/FerriteCoreEntrySetAccess.java
+@@ -0,0 +1,14 @@
++package com.google.common.collect;
++
++import java.util.Map;
++
++/**
++ * Same as {@link FerriteCoreImmutableMapAccess}
++ */
++public abstract class FerriteCoreEntrySetAccess<K, V> extends ImmutableSet<Map.Entry<K, V>> {
++
++    public FerriteCoreEntrySetAccess() {}
++
++    @Override
++    public abstract boolean isPartialView();
++}
+\ No newline at end of file
+diff --git a/src/main/java/com/google/common/collect/FerriteCoreImmutableMapAccess.java b/src/main/java/com/google/common/collect/FerriteCoreImmutableMapAccess.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..140198ceea29dc64c779e771a9f87e1613798f09
+--- /dev/null
++++ b/src/main/java/com/google/common/collect/FerriteCoreImmutableMapAccess.java
+@@ -0,0 +1,17 @@
++package com.google.common.collect;
++
++import java.util.Map;
++
++/**
++ * Redeclares the package-private members of ImmutableMap as public, so it can be extended in other packages
++ */
++public abstract class FerriteCoreImmutableMapAccess<K, V> extends ImmutableMap<K, V> {
++
++    public FerriteCoreImmutableMapAccess() {}
++
++    @Override
++    public abstract ImmutableSet<Map.Entry<K, V>> createEntrySet();
++
++    @Override
++    public abstract boolean isPartialView();
++}
+\ No newline at end of file
+diff --git a/src/main/java/malte0811/ferritecore/classloading/FastImmutableMapDefiner.java b/src/main/java/malte0811/ferritecore/classloading/FastImmutableMapDefiner.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..43095391aafac4322445189497d66654fcec5f6a
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/classloading/FastImmutableMapDefiner.java
+@@ -0,0 +1,77 @@
++package malte0811.ferritecore.classloading;
++
++import com.google.common.base.Preconditions;
++import com.google.common.base.Suppliers;
++import com.google.common.collect.ImmutableMap;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import net.minecraft.world.level.block.state.properties.Property;
++
++import java.io.InputStream;
++import java.lang.invoke.MethodHandle;
++import java.lang.invoke.MethodHandles;
++import java.lang.invoke.MethodType;
++import java.util.function.Supplier;
++
++/**
++ * Helper to define classes in the com.google.common.collect package without issues due to jar signing and classloaders
++ * (the second one only seems to be an issue on Fabric, but the first one is a problem on both)
++ */
++public class FastImmutableMapDefiner {
++    public static String GOOGLE_ACCESS_PREFIX = "/googleaccess/";
++    public static String GOOGLE_ACCESS_SUFFIX = ".class_manual";
++
++    private static final Supplier<Definer> DEFINE_CLASS = Suppliers.memoize(() -> {
++        try {
++            MethodHandles.Lookup privateLookup = MethodHandles.privateLookupIn(
++                    ImmutableMap.class, MethodHandles.lookup()
++            );
++            return (bytes, name) -> privateLookup.defineClass(bytes);
++        } catch (IllegalAccessException e) {
++            throw new RuntimeException(e);
++        }
++    });
++
++    /**
++     * Creates a MethodHandle for the constructor of FastMapEntryImmutableMap which takes one argument, which has to be
++     * an instance FastMapStateHolder. This also handles the necessary classloader acrobatics.
++     */
++    private static final Supplier<MethodHandle> MAKE_IMMUTABLE_FAST_MAP = Suppliers.memoize(() -> {
++        try {
++            // Load these in the app classloader!
++            defineInAppClassloader("com.google.common.collect.FerriteCoreEntrySetAccess");
++            defineInAppClassloader("com.google.common.collect.FerriteCoreImmutableMapAccess");
++            // This lives in the transforming classloader, but must not be loaded before the previous classes are in
++            // the app classloader!
++            Class<?> map = Class.forName("malte0811.ferritecore.fastmap.immutable.FastMapEntryImmutableMap");
++            MethodHandles.Lookup lookup = MethodHandles.lookup();
++            return lookup.findConstructor(map, MethodType.methodType(void.class, FastMapStateHolder.class));
++        } catch (Exception x) {
++            throw new RuntimeException(x);
++        }
++    });
++
++    public static ImmutableMap<Property<?>, Comparable<?>> makeMap(FastMapStateHolder<?> state) {
++        try {
++            return (ImmutableMap<Property<?>, Comparable<?>>) MAKE_IMMUTABLE_FAST_MAP.get().invoke(state);
++        } catch (Error e) {
++            throw e;
++        } catch (Throwable x) {
++            throw new RuntimeException(x);
++        }
++    }
++
++    private static void defineInAppClassloader(String name) throws Exception {
++        InputStream byteInput = FastImmutableMapDefiner.class.getResourceAsStream(
++                GOOGLE_ACCESS_PREFIX + name.replace('.', '/') + GOOGLE_ACCESS_SUFFIX
++        );
++        byte[] classBytes = new byte[byteInput.available()];
++        final int bytesRead = byteInput.read(classBytes);
++        Preconditions.checkState(bytesRead == classBytes.length);
++        Class<?> loaded = DEFINE_CLASS.get().define(classBytes, name);
++        Preconditions.checkState(loaded.getClassLoader() == ImmutableMap.class.getClassLoader());
++    }
++
++    private interface Definer {
++        Class<?> define(byte[] bytes, String name) throws Exception;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/ducks/FastMapStateHolder.java b/src/main/java/malte0811/ferritecore/ducks/FastMapStateHolder.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b16c60f55a541121ffa8005c3b87f7db1f88921e
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/ducks/FastMapStateHolder.java
+@@ -0,0 +1,24 @@
++package malte0811.ferritecore.ducks;
++
++import com.google.common.collect.ImmutableMap;
++import com.google.common.collect.Table;
++import malte0811.ferritecore.fastmap.FastMap;
++import net.minecraft.world.level.block.state.properties.Property;
++
++public interface FastMapStateHolder<S> {
++    FastMap<S> getStateMap();
++
++    void setStateMap(FastMap<S> newValue);
++
++    int getStateIndex();
++
++    void setStateIndex(int newValue);
++
++    ImmutableMap<Property<?>, Comparable<?>> getVanillaPropertyMap();
++
++    void replacePropertyMap(ImmutableMap<Property<?>, Comparable<?>> newMap);
++
++    void setNeighborTable(Table<Property<?>, Comparable<?>, S> table);
++
++    Table<Property<?>, Comparable<?>, S> getNeighborTable();
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/BinaryFastMapKey.java b/src/main/java/malte0811/ferritecore/fastmap/BinaryFastMapKey.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac442b764d06ee9c2f609a1b672af7fa10b65aa1
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/BinaryFastMapKey.java
+@@ -0,0 +1,66 @@
++package malte0811.ferritecore.fastmap;
++
++import com.google.common.base.Preconditions;
++import net.minecraft.util.Mth;
++import net.minecraft.world.level.block.state.properties.Property;
++
++/**
++ * A bitmask-based implementation of a FastMapKey. This reduces the density of data in the value matrix, but allows
++ * accessing values with only some bitwise operations, which are much faster than integer division
++ */
++public class BinaryFastMapKey<T extends Comparable<T>> extends FastMapKey<T> {
++    private final byte firstBitInValue;
++    private final byte firstBitAfterValue;
++
++    public BinaryFastMapKey(Property<T> property, int mapFactor) {
++        super(property);
++        Preconditions.checkArgument(Mth.isPowerOfTwo(mapFactor));
++        final int addedFactor = Mth.smallestEncompassingPowerOfTwo(numValues());
++        Preconditions.checkState(numValues() <= addedFactor);
++        Preconditions.checkState(addedFactor < 2 * numValues());
++        final int setBitInBaseFactor = Mth.log2(mapFactor);
++        final int setBitInAddedFactor = Mth.log2(addedFactor);
++        Preconditions.checkState(setBitInBaseFactor + setBitInAddedFactor <= 31);
++        firstBitInValue = (byte) setBitInBaseFactor;
++        firstBitAfterValue = (byte) (setBitInBaseFactor + setBitInAddedFactor);
++    }
++
++    @Override
++    public T getValue(int mapIndex) {
++        final int clearAbove = mapIndex & lowestNBits(firstBitAfterValue);
++        return byInternalIndex(clearAbove >>> firstBitInValue);
++    }
++
++    @Override
++    public int replaceIn(int mapIndex, T newValue) {
++        final int newPartialIndex = toPartialMapIndex(newValue);
++        if (newPartialIndex < 0) {
++            return -1;
++        }
++        final int keepMask = ~lowestNBits(firstBitAfterValue) | lowestNBits(firstBitInValue);
++        return (keepMask & mapIndex) | newPartialIndex;
++    }
++
++    @Override
++    public int toPartialMapIndex(Comparable<?> value) {
++        final int internalIndex = getInternalIndex(value);
++        if (internalIndex < 0 || internalIndex >= numValues()) {
++            return -1;
++        } else {
++            return internalIndex << firstBitInValue;
++        }
++    }
++
++    @Override
++    public int getFactorToNext() {
++        return 1 << (firstBitAfterValue - firstBitInValue);
++    }
++
++    private int lowestNBits(byte n) {
++        if (n >= Integer.SIZE) {
++            return -1;
++        } else {
++            return (1 << n) - 1;
++        }
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/CompactFastMapKey.java b/src/main/java/malte0811/ferritecore/fastmap/CompactFastMapKey.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..81463c6092c9b9d7d6c144b217a0cfe7c83ad8f8
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/CompactFastMapKey.java
+@@ -0,0 +1,44 @@
++package malte0811.ferritecore.fastmap;
++
++import net.minecraft.world.level.block.state.properties.Property;
++
++/**
++ * A "compact" implementation of a FastMapKey, i.e. one which completely fills the value matrix
++ */
++public class CompactFastMapKey<T extends Comparable<T>> extends FastMapKey<T> {
++    private final int mapFactor;
++
++    CompactFastMapKey(Property<T> property, int mapFactor) {
++        super(property);
++        this.mapFactor = mapFactor;
++    }
++
++    @Override
++    public T getValue(int mapIndex) {
++        int index = (mapIndex / mapFactor) % numValues();
++        return byInternalIndex(index);
++    }
++
++    @Override
++    public int replaceIn(int mapIndex, T newValue) {
++        final int lowerData = mapIndex % mapFactor;
++        final int upperFactor = mapFactor * numValues();
++        final int upperData = mapIndex - mapIndex % upperFactor;
++        int internalIndex = getInternalIndex(newValue);
++        if (internalIndex < 0 || internalIndex >= numValues()) {
++            return -1;
++        } else {
++            return lowerData + mapFactor * internalIndex + upperData;
++        }
++    }
++
++    @Override
++    public int toPartialMapIndex(Comparable<?> value) {
++        return mapFactor * getInternalIndex(value);
++    }
++
++    @Override
++    public int getFactorToNext() {
++        return numValues();
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/FastMap.java b/src/main/java/malte0811/ferritecore/fastmap/FastMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b51c60213db609895008cab29063ceab2039d20
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/FastMap.java
+@@ -0,0 +1,152 @@
++package malte0811.ferritecore.fastmap;
++
++import com.google.common.collect.ImmutableList;
++import com.google.common.collect.ImmutableMap;
++import javax.annotation.Nullable;
++import net.minecraft.world.level.block.state.properties.Property;
++import java.util.*;
++
++/**
++ * Maps a Property->Value assignment to a value, while allowing fast access to "neighbor" states
++ */
++public class FastMap<Value> {
++    private final List<FastMapKey<?>> keys;
++    private final List<Value> valueMatrix;
++    // It might be possible to get rid of this (and the equivalent map for values) by sorting the key vectors by
++    // property name (natural order for values) and using a binary search above a given size, but choosing that size
++    // would likely be more effort than it's worth
++    private final Map<Property<?>, Integer> toKeyIndex;
++
++    public FastMap(
++            Collection<Property<?>> properties, Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, boolean compact
++    ) {
++        List<FastMapKey<?>> keys = new ArrayList<>(properties.size());
++        int factorUpTo = 1;
++        ImmutableMap.Builder<Property<?>, Integer> toKeyIndex = ImmutableMap.builder();
++        for (Property<?> prop : properties) {
++            toKeyIndex.put(prop, keys.size());
++            FastMapKey<?> nextKey;
++            if (compact) {
++                nextKey = new CompactFastMapKey<>(prop, factorUpTo);
++            } else {
++                nextKey = new BinaryFastMapKey<>(prop, factorUpTo);
++            }
++            keys.add(nextKey);
++            factorUpTo *= nextKey.getFactorToNext();
++        }
++        this.keys = ImmutableList.copyOf(keys);
++        this.toKeyIndex = toKeyIndex.build();
++
++        List<Value> valuesList = new ArrayList<>(factorUpTo);
++        for (int i = 0; i < factorUpTo; ++i) {
++            valuesList.add(null);
++        }
++        for (Map.Entry<Map<Property<?>, Comparable<?>>, Value> state : valuesMap.entrySet()) {
++            valuesList.set(getIndexOf(state.getKey()), state.getValue());
++        }
++        this.valueMatrix = Collections.unmodifiableList(valuesList);
++    }
++
++    /**
++     * Computes the value for a neighbor state
++     *
++     * @param oldIndex The original state index
++     * @param prop     The property to be replaced
++     * @param value    The new value of this property
++     * @return The value corresponding to the specified neighbor, or null if value is not a valid value for prop
++     */
++    @Nullable
++    public <T extends Comparable<T>>
++    Value with(int oldIndex, Property<T> prop, T value) {
++        final FastMapKey<T> keyToChange = getKeyFor(prop);
++        if (keyToChange == null) {
++            return null;
++        }
++        int newIndex = keyToChange.replaceIn(oldIndex, value);
++        if (newIndex < 0) {
++            return null;
++        }
++        return valueMatrix.get(newIndex);
++    }
++
++    /**
++     * @return The map index corresponding to the given property-value assignment
++     */
++    public int getIndexOf(Map<Property<?>, Comparable<?>> state) {
++        int id = 0;
++        for (FastMapKey<?> k : keys) {
++            id += k.toPartialMapIndex(state.get(k.getProperty()));
++        }
++        return id;
++    }
++
++    /**
++     * Returns the value assigned to a property at a given map index
++     *
++     * @param stateIndex The map index for the assignment to check
++     * @param property   The property to retrieve
++     * @return The value of the property or null if the state if not present
++     */
++    @Nullable
++    public <T extends Comparable<T>>
++    T getValue(int stateIndex, Property<T> property) {
++        final FastMapKey<T> propId = getKeyFor(property);
++        if (propId == null) {
++            return null;
++        }
++        return propId.getValue(stateIndex);
++    }
++
++    @Nullable
++    public Comparable<?> getValue(int stateIndex, Object key) {
++        if (key instanceof Property<?>) {
++            return getValue(stateIndex, (Property<?>) key);
++        } else {
++            return null;
++        }
++    }
++
++    /**
++     * Returns the given property and its value in the given state
++     *
++     * @param propertyIndex The index of the property to retrieve
++     * @param stateIndex    The index of the state to use for the value
++     */
++    public Map.Entry<Property<?>, Comparable<?>> getEntry(int propertyIndex, int stateIndex) {
++        return new AbstractMap.SimpleImmutableEntry<>(
++                getKey(propertyIndex).getProperty(), getKey(propertyIndex).getValue(stateIndex)
++        );
++    }
++
++    /**
++     * Same as {@link FastMap#with(int, Property, Comparable)}, but usable when the type of the value to set is not
++     * correctly typed
++     */
++    public <T extends Comparable<T>>
++    Value withUnsafe(int globalTableIndex, Property<T> property, Object newValue) {
++        return with(globalTableIndex, property, (T) newValue);
++    }
++
++    public int numProperties() {
++        return keys.size();
++    }
++
++    public FastMapKey<?> getKey(int keyIndex) {
++        return keys.get(keyIndex);
++    }
++
++    @Nullable
++    private <T extends Comparable<T>>
++    FastMapKey<T> getKeyFor(Property<T> prop) {
++        Integer index = toKeyIndex.get(prop);
++        if (index == null) {
++            return null;
++        } else {
++            return (FastMapKey<T>) getKey(index);
++        }
++    }
++
++    public boolean isSingleState() {
++        return valueMatrix.size() == 1;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/FastMapKey.java b/src/main/java/malte0811/ferritecore/fastmap/FastMapKey.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..272527722d907da26ddc7cb5a58607d2195e288c
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/FastMapKey.java
+@@ -0,0 +1,59 @@
++package malte0811.ferritecore.fastmap;
++
++import net.minecraft.world.level.block.state.properties.Property;
++
++/**
++ * Defines the indexing strategy for a single property in a FastMap
++ */
++public abstract class FastMapKey<T extends Comparable<T>> {
++    /**
++     * Maps values of the property to indices in [0, numValues()) and vice versa
++     */
++    private final PropertyIndexer<T> indexer;
++
++    protected FastMapKey(Property<T> property) {
++        this.indexer = PropertyIndexer.makeIndexer(property);
++    }
++
++    /**
++     * @param mapIndex An index in the FastMap's value matrix
++     * @return The value of this property in that index
++     */
++    abstract T getValue(int mapIndex);
++
++    /**
++     * @param mapIndex The original index in the FastMap's value matrix
++     * @param newValue The value to assign to this property
++     * @return The index in the value matrix corresponding to the input state with only the value of this property
++     * replaced by <code>newValue</code>
++     */
++    abstract int replaceIn(int mapIndex, T newValue);
++
++    /**
++     * @param value A possible value of this property
++     * @return An integer such that the sum over the returned values for all properties is the state corresponding to
++     * the arguments
++     */
++    abstract int toPartialMapIndex(Comparable<?> value);
++
++    /**
++     * @return An integer such that adding multiples of this value does not change the result of getValue
++     */
++    abstract int getFactorToNext();
++
++    public final int numValues() {
++        return indexer.numValues();
++    }
++
++    public final Property<T> getProperty() {
++        return indexer.getProperty();
++    }
++
++    protected final int getInternalIndex(Comparable<?> value) {
++        return indexer.toIndex((T) value);
++    }
++
++    protected final T byInternalIndex(int internalIndex) {
++        return indexer.byIndex(internalIndex);
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/PropertyIndexer.java b/src/main/java/malte0811/ferritecore/fastmap/PropertyIndexer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1fe585c611e4d9327338e50685c3a7f14be207b6
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/PropertyIndexer.java
+@@ -0,0 +1,235 @@
++package malte0811.ferritecore.fastmap;
++
++import com.google.common.base.Preconditions;
++import com.google.common.collect.ImmutableList;
++import com.google.common.collect.ImmutableMap;
++import it.unimi.dsi.fastutil.objects.Object2ObjectOpenCustomHashMap;
++import net.minecraft.Util;
++import net.minecraft.core.Direction;
++import net.minecraft.util.StringRepresentable;
++import net.minecraft.world.level.block.state.properties.BooleanProperty;
++import net.minecraft.world.level.block.state.properties.EnumProperty;
++import net.minecraft.world.level.block.state.properties.IntegerProperty;
++import net.minecraft.world.level.block.state.properties.Property;
++
++import javax.annotation.Nullable;
++import java.util.*;
++
++/**
++ * Provides a way of converting between values of a property and indices in [0, #values). Most properties are covered
++ * by one of the (faster) specific implementations, all other properties use the {@link GenericIndexer}
++ */
++public abstract class PropertyIndexer<T extends Comparable<T>> {
++    private static final Map<Property<?>, PropertyIndexer<?>> KNOWN_INDEXERS = new Object2ObjectOpenCustomHashMap<>(
++            Util.identityStrategy()
++    );
++
++    private final Property<T> property;
++    private final int numValues;
++
++    public static <T extends Comparable<T>> PropertyIndexer<T> makeIndexer(Property<T> prop) {
++        synchronized (KNOWN_INDEXERS) {
++            PropertyIndexer<?> unchecked = KNOWN_INDEXERS.computeIfAbsent(prop, propInner -> {
++                PropertyIndexer<?> result = null;
++                if (propInner instanceof BooleanProperty) {
++                    result = new BoolIndexer((BooleanProperty) propInner);
++                } else if (propInner instanceof IntegerProperty) {
++                    result = new IntIndexer((IntegerProperty) propInner);
++                } else if (WeirdVanillaDirectionIndexer.isApplicable(propInner)) {
++                    result = new WeirdVanillaDirectionIndexer((Property<Direction>) propInner);
++                } else if (propInner instanceof EnumProperty<?>) {
++                    result = new EnumIndexer<>((EnumProperty<?>) propInner);
++                }
++                if (result == null || !result.isValid()) {
++                    return new GenericIndexer<>(propInner);
++                } else {
++                    return result;
++                }
++            });
++            return (PropertyIndexer<T>) unchecked;
++        }
++    }
++
++    protected PropertyIndexer(Property<T> property) {
++        this.property = property;
++        this.numValues = property.getPossibleValues().size();
++    }
++
++    public Property<T> getProperty() {
++        return property;
++    }
++
++    public int numValues() {
++        return numValues;
++    }
++
++    @Nullable
++    public abstract T byIndex(int index);
++
++    public abstract int toIndex(T value);
++
++    /**
++     * Checks if this indexer is valid, i.e. iterates over the correct set of values in the correct order
++     */
++    protected boolean isValid() {
++        Collection<T> allowed = getProperty().getPossibleValues();
++        int index = 0;
++        for (T val : allowed) {
++            if (toIndex(val) != index || !val.equals(byIndex(index))) {
++                return false;
++            }
++            ++index;
++        }
++        return true;
++    }
++
++    private static class BoolIndexer extends PropertyIndexer<Boolean> {
++
++        protected BoolIndexer(BooleanProperty property) {
++            super(property);
++        }
++
++        @Override
++        @Nullable
++        public Boolean byIndex(int index) {
++            return switch (index) {
++                case 0 -> Boolean.TRUE;
++                case 1 -> Boolean.FALSE;
++                default -> null;
++            };
++        }
++
++        @Override
++        public int toIndex(Boolean value) {
++            return value ? 0 : 1;
++        }
++    }
++
++    private static class IntIndexer extends PropertyIndexer<Integer> {
++        private final int min;
++
++        protected IntIndexer(IntegerProperty property) {
++            super(property);
++            this.min = property.getPossibleValues().stream().min(Comparator.naturalOrder()).orElse(0);
++        }
++
++        @Override
++        @Nullable
++        public Integer byIndex(int index) {
++            if (index >= 0 && index < numValues()) {
++                return index + min;
++            } else {
++                return null;
++            }
++        }
++
++        @Override
++        public int toIndex(Integer value) {
++            return value - min;
++        }
++    }
++
++    private static class EnumIndexer<E extends Enum<E> & StringRepresentable>
++            extends PropertyIndexer<E> {
++        private final int ordinalOffset;
++        private final E[] enumValues;
++
++        protected EnumIndexer(EnumProperty<E> property) {
++            super(property);
++            this.ordinalOffset = property.getPossibleValues()
++                    .stream()
++                    .mapToInt(Enum::ordinal)
++                    .min()
++                    .orElse(0);
++            this.enumValues = getProperty().getValueClass().getEnumConstants();
++        }
++
++        @Override
++        @Nullable
++        public E byIndex(int index) {
++            final int arrayIndex = index + ordinalOffset;
++            if (arrayIndex < enumValues.length) {
++                return enumValues[arrayIndex];
++            } else {
++                return null;
++            }
++        }
++
++        @Override
++        public int toIndex(E value) {
++            return value.ordinal() - ordinalOffset;
++        }
++    }
++
++    /**
++     * This is a kind of hack for a vanilla quirk: BlockStateProperties.FACING (which is used everywhere) has the order
++     * NORTH, EAST, SOUTH, WEST, UP, DOWN
++     * instead of the "canonical" order given by the enum
++     */
++    private static class WeirdVanillaDirectionIndexer extends PropertyIndexer<Direction> {
++        private static final Direction[] ORDER = {
++                Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.UP, Direction.DOWN
++        };
++
++        public WeirdVanillaDirectionIndexer(Property<Direction> prop) {
++            super(prop);
++            Preconditions.checkState(isValid());
++        }
++
++        static boolean isApplicable(Property<?> prop) {
++            Collection<?> values = prop.getPossibleValues();
++            if (values.size() != ORDER.length) {
++                return false;
++            }
++            return Arrays.equals(ORDER, values.toArray());
++        }
++
++        @Override
++        @Nullable
++        public Direction byIndex(int index) {
++            if (index >= 0 && index < ORDER.length) {
++                return ORDER[index];
++            } else {
++                return null;
++            }
++        }
++
++        @Override
++        public int toIndex(Direction value) {
++            return switch (value) {
++                case NORTH -> 0;
++                case EAST -> 1;
++                case SOUTH -> 2;
++                case WEST -> 3;
++                case UP -> 4;
++                case DOWN -> 5;
++            };
++        }
++    }
++
++    private static class GenericIndexer<T extends Comparable<T>> extends PropertyIndexer<T> {
++        private final Map<Comparable<?>, Integer> toValueIndex;
++        private final List<T> values;
++
++        protected GenericIndexer(Property<T> property) {
++            super(property);
++            this.values = ImmutableList.copyOf(property.getPossibleValues());
++            ImmutableMap.Builder<Comparable<?>, Integer> toValueIndex = ImmutableMap.builder();
++            for (int i = 0; i < this.values.size(); i++) {
++                toValueIndex.put(this.values.get(i), i);
++            }
++            this.toValueIndex = toValueIndex.build();
++        }
++
++        @Override
++        @Nullable
++        public T byIndex(int index) {
++            return values.get(index);
++        }
++
++        @Override
++        public int toIndex(T value) {
++            return toValueIndex.getOrDefault(value, -1);
++        }
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryEntrySet.java b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryEntrySet.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e6b46012793bcf47ee33bf86bf61691a459474be
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryEntrySet.java
+@@ -0,0 +1,44 @@
++package malte0811.ferritecore.fastmap.immutable;
++
++import com.google.common.collect.FerriteCoreEntrySetAccess;
++import com.google.common.collect.UnmodifiableIterator;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import net.minecraft.world.level.block.state.properties.Property;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.Map;
++
++public class FastMapEntryEntrySet extends FerriteCoreEntrySetAccess<Property<?>, Comparable<?>> {
++    private final FastMapStateHolder<?> viewedState;
++
++    public FastMapEntryEntrySet(FastMapStateHolder<?> viewedState) {
++        this.viewedState = viewedState;
++    }
++
++    @Override
++    @NotNull
++    public UnmodifiableIterator<Map.Entry<Property<?>, Comparable<?>>> iterator() {
++        return new FastMapEntryIterator(viewedState);
++    }
++
++    @Override
++    public int size() {
++        return viewedState.getStateMap().numProperties();
++    }
++
++    @Override
++    public boolean contains(@Nullable Object object) {
++        if (!(object instanceof Map.Entry)) {
++            return false;
++        }
++        Map.Entry<?, ?> entry = (Map.Entry<?, ?>) object;
++        Comparable<?> valueInMap = viewedState.getStateMap().getValue(viewedState.getStateIndex(), entry.getKey());
++        return valueInMap != null && valueInMap.equals(((Map.Entry<?, ?>) object).getValue());
++    }
++
++    @Override
++    public boolean isPartialView() {
++        return false;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryImmutableMap.java b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryImmutableMap.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..186a8010c9ed98b8948bae14868843a50e7b9be1
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryImmutableMap.java
+@@ -0,0 +1,40 @@
++package malte0811.ferritecore.fastmap.immutable;
++
++import com.google.common.collect.FerriteCoreImmutableMapAccess;
++import com.google.common.collect.ImmutableSet;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import net.minecraft.world.level.block.state.properties.Property;
++import org.jetbrains.annotations.Nullable;
++
++public class FastMapEntryImmutableMap extends FerriteCoreImmutableMapAccess<Property<?>, Comparable<?>> {
++    private final FastMapStateHolder<?> viewedState;
++
++    public FastMapEntryImmutableMap(FastMapStateHolder<?> viewedState) {
++        this.viewedState = viewedState;
++    }
++
++    @Override
++    public int size() {
++        return viewedState.getStateMap().numProperties();
++    }
++
++    @Override
++    public Comparable<?> get(@Nullable Object key) {
++        return viewedState.getStateMap().getValue(viewedState.getStateIndex(), key);
++    }
++
++    @Override
++    public ImmutableSet<Entry<Property<?>, Comparable<?>>> createEntrySet() {
++        return new FastMapEntryEntrySet(viewedState);
++    }
++
++    @Override
++    public ImmutableSet<Entry<Property<?>, Comparable<?>>> entrySet() {
++        return new FastMapEntryEntrySet(viewedState);
++    }
++
++    @Override
++    public boolean isPartialView() {
++        return false;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryIterator.java b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryIterator.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c8d491732b4f5cddde13b78eea0b5954617c8fc0
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/immutable/FastMapEntryIterator.java
+@@ -0,0 +1,30 @@
++package malte0811.ferritecore.fastmap.immutable;
++
++import com.google.common.collect.UnmodifiableIterator;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import net.minecraft.world.level.block.state.properties.Property;
++
++import java.util.Map;
++
++public class FastMapEntryIterator extends UnmodifiableIterator<Map.Entry<Property<?>, Comparable<?>>> {
++    private final FastMapStateHolder<?> viewedState;
++    private int currentIndex = 0;
++
++    public FastMapEntryIterator(FastMapStateHolder<?> viewedState) {
++        this.viewedState = viewedState;
++    }
++
++    @Override
++    public boolean hasNext() {
++        return currentIndex < viewedState.getStateMap().numProperties();
++    }
++
++    @Override
++    public Map.Entry<Property<?>, Comparable<?>> next() {
++        Map.Entry<Property<?>, Comparable<?>> next = viewedState.getStateMap().getEntry(
++                currentIndex, viewedState.getStateIndex()
++        );
++        ++currentIndex;
++        return next;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/table/CrashNeighborTable.java b/src/main/java/malte0811/ferritecore/fastmap/table/CrashNeighborTable.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ae816ab3d3aadd971c46685088070828afc1764d
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/table/CrashNeighborTable.java
+@@ -0,0 +1,106 @@
++package malte0811.ferritecore.fastmap.table;
++
++import net.minecraft.world.level.block.state.properties.Property;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.Collection;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Singleton, which is assigned as the neighbor table for all blockstates by default. This makes it clear who is to be
++ * blamed for any crashes, and also how to work around them.
++ */
++public class CrashNeighborTable<S> extends NeighborTableBase<S> {
++    private static final CrashNeighborTable<?> INSTANCE = new CrashNeighborTable<>();
++
++    @SuppressWarnings("unchecked")
++    public static <S> CrashNeighborTable<S> getInstance() {
++        return (CrashNeighborTable<S>) INSTANCE;
++    }
++
++    private CrashNeighborTable() {}
++
++    @Override
++    public boolean contains(@Nullable Object rowKey, @Nullable Object columnKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public boolean containsRow(@Nullable Object rowKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public boolean containsColumn(@Nullable Object columnKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public boolean containsValue(@Nullable Object value) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public S get(@Nullable Object rowKey, @Nullable Object columnKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public int size() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Map<Comparable<?>, S> row(@NotNull Property<?> rowKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Map<Property<?>, S> column(@NotNull Comparable<?> columnKey) {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Set<Cell<Property<?>, Comparable<?>, S>> cellSet() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Set<Property<?>> rowKeySet() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Set<Comparable<?>> columnKeySet() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Collection<S> values() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Map<Property<?>, Map<Comparable<?>, S>> rowMap() {
++        return crashOnAccess();
++    }
++
++    @Override
++    public Map<Comparable<?>, Map<Property<?>, S>> columnMap() {
++        return crashOnAccess();
++    }
++
++    private static <T> T crashOnAccess() {
++        throw new UnsupportedOperationException(
++                "A mod tried to access the state neighbor table directly. Please report this at " + ISSUES_URL +
++                        ". As a temporary workaround you can enable \"populateNeighborTable\" in the FerriteCore config"
++        );
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/table/FastmapNeighborTable.java b/src/main/java/malte0811/ferritecore/fastmap/table/FastmapNeighborTable.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9f1dcbc244a7f4c784d31fa8b1903ed72b715f06
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/table/FastmapNeighborTable.java
+@@ -0,0 +1,220 @@
++package malte0811.ferritecore.fastmap.table;
++
++import com.google.common.base.Preconditions;
++import com.google.common.collect.Tables;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import malte0811.ferritecore.fastmap.FastMap;
++import net.minecraft.world.level.block.state.properties.Property;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.*;
++
++/**
++ * This is mostly untested, and is only used when mods are present that are known to access the neighbor table directly.
++ */
++public class FastmapNeighborTable<S> extends NeighborTableBase<S> {
++    private final FastMapStateHolder<S> owner;
++
++    public FastmapNeighborTable(FastMapStateHolder<S> owner) {
++        this.owner = owner;
++    }
++
++    @Override
++    public boolean contains(@Nullable Object rowKey, @Nullable Object columnKey) {
++        if (!(columnKey instanceof Comparable<?>) || !(rowKey instanceof Property<?>)) {
++            return false;
++        }
++        Comparable<?> valueInState = owner.getStateMap().getValue(owner.getStateIndex(), (Property<?>) rowKey);
++        if (valueInState == null || valueInState.equals(columnKey)) {
++            // Not contained in state, or the current value (which isn't added to the table)
++            return false;
++        } else {
++            // We contain the row, and we only ever contain non-null row keys
++            Preconditions.checkNotNull(rowKey);
++            // Is value allowed for property?
++            return ((Property<?>) rowKey).getPossibleValues().contains(columnKey);
++        }
++    }
++
++    @Override
++    public boolean containsRow(@Nullable Object rowKey) {
++        if (!(rowKey instanceof Property<?>)) {
++            return false;
++        } else {
++            // Property is not in state
++            return owner.getStateMap().getValue(owner.getStateIndex(), (Property<?>) rowKey) != null;
++        }
++    }
++
++    @Override
++    public boolean containsColumn(@Nullable Object columnKey) {
++        FastMap<S> map = owner.getStateMap();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            Map.Entry<Property<?>, Comparable<?>> entry = map.getEntry(i, owner.getStateIndex());
++            if (!entry.getValue().equals(columnKey) && entry.getKey().getPossibleValues().contains(columnKey)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    @Override
++    public boolean containsValue(@Nullable Object value) {
++        if (value == null) {
++            return false;
++        }
++        final FastMap<S> map = owner.getStateMap();
++        for (int propIndex = 0; propIndex < map.numProperties(); ++propIndex) {
++            if (isNeighbor(map.getKey(propIndex).getProperty(), value)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private <T extends Comparable<T>> boolean isNeighbor(Property<T> prop, Object potentialNeighbor) {
++        final FastMap<S> map = owner.getStateMap();
++        final T valueInState = map.getValue(owner.getStateIndex(), prop);
++        for (final T neighborValue : prop.getPossibleValues()) {
++            if (neighborValue.equals(valueInState)) {
++                continue;
++            }
++            final S neighbor = map.with(owner.getStateIndex(), prop, valueInState);
++            if (potentialNeighbor.equals(neighbor)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    @Override
++    public S get(@Nullable Object rowKey, @Nullable Object columnKey) {
++        if (!(rowKey instanceof Property)) {
++            return null;
++        }
++        return owner.getStateMap().withUnsafe(owner.getStateIndex(), (Property<?>) rowKey, columnKey);
++    }
++
++    @Override
++    public boolean isEmpty() {
++        return owner.getStateMap().isSingleState();
++    }
++
++    @Override
++    public int size() {
++        int numNeighbors = 0;
++        for (int i = 0; i < owner.getStateMap().numProperties(); ++i) {
++            numNeighbors += owner.getStateMap().getKey(i).numValues();
++        }
++        return numNeighbors;
++    }
++
++    @Override
++    public Map<Comparable<?>, S> row(@NotNull Property<?> rowKey) {
++        final Map<Comparable<?>, S> rowMap = new HashMap<>();
++        final Comparable<?> contained = owner.getStateMap().getValue(owner.getStateIndex(), rowKey);
++        for (Comparable<?> val : rowKey.getPossibleValues()) {
++            if (!val.equals(contained)) {
++                rowMap.put(val, owner.getStateMap().withUnsafe(owner.getStateIndex(), rowKey, val));
++            }
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Map<Property<?>, S> column(@NotNull Comparable<?> columnKey) {
++        final FastMap<S> map = owner.getStateMap();
++        final int index = owner.getStateIndex();
++        final Map<Property<?>, S> rowMap = new HashMap<>();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            final Property<?> rowKey = map.getKey(i).getProperty();
++            final Comparable<?> contained = map.getValue(index, rowKey);
++            for (Comparable<?> val : rowKey.getPossibleValues()) {
++                if (!val.equals(contained) && val.equals(columnKey)) {
++                    rowMap.put(rowKey, map.withUnsafe(index, rowKey, val));
++                }
++            }
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Set<Cell<Property<?>, Comparable<?>, S>> cellSet() {
++        final FastMap<S> map = owner.getStateMap();
++        final int index = owner.getStateIndex();
++        final Set<Cell<Property<?>, Comparable<?>, S>> rowMap = new HashSet<>();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            final Property<?> rowKey = map.getKey(i).getProperty();
++            final Comparable<?> contained = map.getValue(index, rowKey);
++            for (Comparable<?> val : rowKey.getPossibleValues()) {
++                if (!val.equals(contained)) {
++                    rowMap.add(Tables.immutableCell(rowKey, val, map.withUnsafe(index, rowKey, val)));
++                }
++            }
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Set<Property<?>> rowKeySet() {
++        return owner.getVanillaPropertyMap().keySet();
++    }
++
++    @Override
++    public Set<Comparable<?>> columnKeySet() {
++        final FastMap<S> map = owner.getStateMap();
++        final Set<Comparable<?>> rowMap = new HashSet<>();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            final Property<?> rowKey = map.getKey(i).getProperty();
++            final Comparable<?> contained = map.getValue(owner.getStateIndex(), rowKey);
++            for (Comparable<?> val : rowKey.getPossibleValues()) {
++                if (!val.equals(contained)) {
++                    rowMap.add(val);
++                }
++            }
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Collection<S> values() {
++        final FastMap<S> map = owner.getStateMap();
++        final int index = owner.getStateIndex();
++        final Set<S> rowMap = new HashSet<>();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            final Property<?> rowKey = map.getKey(i).getProperty();
++            final Comparable<?> contained = map.getValue(index, rowKey);
++            for (Comparable<?> val : rowKey.getPossibleValues()) {
++                if (!val.equals(contained)) {
++                    rowMap.add(map.withUnsafe(index, rowKey, val));
++                }
++            }
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Map<Property<?>, Map<Comparable<?>, S>> rowMap() {
++        final FastMap<S> map = owner.getStateMap();
++        final Map<Property<?>, Map<Comparable<?>, S>> rowMap = new HashMap<>();
++        for (int i = 0; i < map.numProperties(); ++i) {
++            final Property<?> rowKey = map.getKey(i).getProperty();
++            rowMap.put(rowKey, row(rowKey));
++        }
++        return rowMap;
++    }
++
++    @Override
++    public Map<Comparable<?>, Map<Property<?>, S>> columnMap() {
++        final Map<Property<?>, Map<Comparable<?>, S>> rowMap = rowMap();
++        Map<Comparable<?>, Map<Property<?>, S>> colMap = new HashMap<>();
++        for (Map.Entry<Property<?>, Map<Comparable<?>, S>> entry : rowMap.entrySet()) {
++            for (Map.Entry<Comparable<?>, S> innerEntry : entry.getValue().entrySet()) {
++                colMap.computeIfAbsent(innerEntry.getKey(), $ -> new HashMap<>())
++                        .put(entry.getKey(), innerEntry.getValue());
++            }
++        }
++        return colMap;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/fastmap/table/NeighborTableBase.java b/src/main/java/malte0811/ferritecore/fastmap/table/NeighborTableBase.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8bfec8e32ad33fac8c929ec7403d734931052c6e
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/fastmap/table/NeighborTableBase.java
+@@ -0,0 +1,36 @@
++package malte0811.ferritecore.fastmap.table;
++
++import com.google.common.collect.Table;
++import net.minecraft.world.level.block.state.properties.Property;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++public abstract class NeighborTableBase<S> implements Table<Property<?>, Comparable<?>, S> {
++    protected static final String ISSUES_URL = "https://github.com/malte0811/FerriteCore/issues";
++
++    @Override
++    public void clear() {
++        crashOnModify();
++    }
++
++    @Override
++    public final S put(@NotNull Property<?> rowKey, @NotNull Comparable<?> columnKey, @NotNull S value) {
++        return crashOnModify();
++    }
++
++    @Override
++    public final void putAll(@NotNull Table<? extends Property<?>, ? extends Comparable<?>, ? extends S> table) {
++        crashOnModify();
++    }
++
++    @Override
++    public final S remove(@Nullable Object rowKey, @Nullable Object columnKey) {
++        return crashOnModify();
++    }
++
++    private static <T> T crashOnModify() {
++        throw new UnsupportedOperationException(
++                "A mod tried to modify the state neighbor table directly. Please report this at " + ISSUES_URL
++        );
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/hash/ArrayVoxelShapeHash.java b/src/main/java/malte0811/ferritecore/hash/ArrayVoxelShapeHash.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..710df81ee11bf8538b3a508aa6dcbdcb15d4d053
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/hash/ArrayVoxelShapeHash.java
+@@ -0,0 +1,29 @@
++package malte0811.ferritecore.hash;
++
++import it.unimi.dsi.fastutil.Hash;
++import net.minecraft.world.phys.shapes.ArrayVoxelShape;
++
++import java.util.Objects;
++
++public class ArrayVoxelShapeHash implements Hash.Strategy<ArrayVoxelShape> {
++    public static final ArrayVoxelShapeHash INSTANCE = new ArrayVoxelShapeHash();
++
++    @Override
++    public int hashCode(ArrayVoxelShape o) {
++        return 31 * Objects.hash(o.getXPoints(), o.getYPoints(), o.getZPoints())
++                + VoxelShapePartHash.INSTANCE.hashCode(o.shape);
++    }
++
++    @Override
++    public boolean equals(ArrayVoxelShape a, ArrayVoxelShape b) {
++        if (a == b) {
++            return true;
++        } else if (a == null || b == null) {
++            return false;
++        }
++        return Objects.equals(a.getXPoints(), b.getXPoints()) &&
++                Objects.equals(a.getYPoints(), b.getYPoints()) &&
++                Objects.equals(a.getZPoints(), b.getZPoints()) &&
++                VoxelShapePartHash.INSTANCE.equals(a.shape, b.shape);
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/hash/LambdaBasedHash.java b/src/main/java/malte0811/ferritecore/hash/LambdaBasedHash.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..630714e9ecdbdaae426d086d1a7b1aced6762e16
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/hash/LambdaBasedHash.java
+@@ -0,0 +1,26 @@
++package malte0811.ferritecore.hash;
++
++import it.unimi.dsi.fastutil.Hash;
++
++import java.util.function.BiPredicate;
++import java.util.function.ToIntFunction;
++
++public class LambdaBasedHash<T> implements Hash.Strategy<T> {
++    private final ToIntFunction<T> hash;
++    private final BiPredicate<T, T> equal;
++
++    public LambdaBasedHash(ToIntFunction<T> hash, BiPredicate<T, T> equal) {
++        this.hash = hash;
++        this.equal = equal;
++    }
++
++    @Override
++    public int hashCode(T o) {
++        return hash.applyAsInt(o);
++    }
++
++    @Override
++    public boolean equals(T a, T b) {
++        return equal.test(a, b);
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/hash/SliceShapeHash.java b/src/main/java/malte0811/ferritecore/hash/SliceShapeHash.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ca78387ea21b316cd4608b5509ef41653ff3534
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/hash/SliceShapeHash.java
+@@ -0,0 +1,30 @@
++package malte0811.ferritecore.hash;
++
++import it.unimi.dsi.fastutil.Hash;
++import net.minecraft.world.phys.shapes.SliceShape;
++
++import java.util.Objects;
++
++public class SliceShapeHash implements Hash.Strategy<SliceShape> {
++    public static final SliceShapeHash INSTANCE = new SliceShapeHash();
++
++    @Override
++    public int hashCode(SliceShape o) {
++        int result = Objects.hashCode(o.getAxis());
++        result = 31 * result + VoxelShapePartHash.INSTANCE.hashCode(o.shape);
++        result = 31 * result + VoxelShapeHash.INSTANCE.hashCode(o.shape);
++        return result;
++    }
++
++    @Override
++    public boolean equals(SliceShape a, SliceShape b) {
++        if (a == b) {
++            return true;
++        } else if (a == null || b == null) {
++            return false;
++        }
++        return Objects.equals(a.getAxis(), b.getAxis()) &&
++                VoxelShapeHash.INSTANCE.equals(a.shape, b.shape) &&
++                VoxelShapePartHash.INSTANCE.equals(a.shape, b.shape);
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/hash/VoxelShapeHash.java b/src/main/java/malte0811/ferritecore/hash/VoxelShapeHash.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a646a3bde450ed9f58012353731116ce6043c9b0
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/hash/VoxelShapeHash.java
+@@ -0,0 +1,47 @@
++package malte0811.ferritecore.hash;
++
++import it.unimi.dsi.fastutil.Hash;
++import net.minecraft.world.phys.shapes.CubeVoxelShape;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import net.minecraft.world.phys.shapes.ArrayVoxelShape;
++import net.minecraft.world.phys.shapes.SliceShape;
++
++public class VoxelShapeHash implements Hash.Strategy<VoxelShape> {
++    public static final VoxelShapeHash INSTANCE = new VoxelShapeHash();
++
++    @Override
++    public int hashCode(VoxelShape o) {
++
++        if (o instanceof SliceShape) {
++            return SliceShapeHash.INSTANCE.hashCode((SliceShape) o);
++        } else if (o instanceof ArrayVoxelShape) {
++            return ArrayVoxelShapeHash.INSTANCE.hashCode((ArrayVoxelShape) o);
++        } else if (isCubeShape(o)) {
++            return VoxelShapePartHash.INSTANCE.hashCode(o.shape);
++        } else {
++            return o.hashCode();
++        }
++    }
++
++    public boolean equals(VoxelShape a, VoxelShape b) {
++        if (a == b) {
++            return true;
++        } else if (a == null || b == null) {
++            return false;
++        } else if (a.getClass() != b.getClass()) {
++            return false;
++        } else if (a instanceof SliceShape) {
++            return SliceShapeHash.INSTANCE.equals((SliceShape) a, (SliceShape) b);
++        } else if (a instanceof ArrayVoxelShape) {
++            return ArrayVoxelShapeHash.INSTANCE.equals((ArrayVoxelShape) a, (ArrayVoxelShape) b);
++        } else if (isCubeShape(a)) {
++            return VoxelShapePartHash.INSTANCE.equals(a.shape, b.shape);
++        } else {
++            return a.equals(b);
++        }
++    }
++
++    private boolean isCubeShape(Object o) {
++        return o instanceof CubeVoxelShape;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/hash/VoxelShapePartHash.java b/src/main/java/malte0811/ferritecore/hash/VoxelShapePartHash.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1f433516dba7509dc9ccc400669cfee75a2a765
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/hash/VoxelShapePartHash.java
+@@ -0,0 +1,75 @@
++package malte0811.ferritecore.hash;
++
++import it.unimi.dsi.fastutil.Hash;
++import net.minecraft.world.phys.shapes.BitSetDiscreteVoxelShape;
++import net.minecraft.world.phys.shapes.SubShape;
++import net.minecraft.world.phys.shapes.DiscreteVoxelShape;
++
++import java.util.Objects;
++
++public class VoxelShapePartHash implements Hash.Strategy<DiscreteVoxelShape> {
++    public static final VoxelShapePartHash INSTANCE = new VoxelShapePartHash();
++
++    public int hashCode(DiscreteVoxelShape o) {
++        int result = o.getXSize();
++        result = 31 * result + o.getYSize();
++        result = 31 * result + o.getZSize();
++        if (o instanceof SubShape) {
++            result = 31 * result + subShape.xMin;
++            result = 31 * result + subShape.yMin;
++            result = 31 * result + subShape.zMin;
++            result = 31 * result + subShape.xMax;
++            result = 31 * result + subShape.yMax;
++            result = 31 * result + subShape.zMax;
++            result = 31 * result + hashCode(SubShape.parent);
++            return result;
++        } else if (o instanceof BitSetDiscreteVoxelShape) {
++            result = 31 * result + bitSetDiscreteVoxelShape.xMin;
++            result = 31 * result + bitSetDiscreteVoxelShape.yMin;
++            result = 31 * result + bitSetDiscreteVoxelShape.zMin;
++            result = 31 * result + bitSetDiscreteVoxelShape.xMax;
++            result = 31 * result + bitSetDiscreteVoxelShape.yMax;
++            result = 31 * result + bitSetDiscreteVoxelShape.zMax;
++            result = 31 * result + Objects.hashCode(BitSetDiscreteVoxelShape.storage);
++            return result;
++        } else {
++            return 31 * result + Objects.hashCode(o);
++        }
++    }
++
++    public boolean equals(DiscreteVoxelShape a, DiscreteVoxelShape b) {
++        if (a == b) {
++            return true;
++        } else if (a == null || b == null) {
++            return false;
++        } else if (a.getClass() != b.getClass()) {
++            return false;
++        }
++        if (a.getXSize() != b.getXSize() || a.getYSize() != b.getYSize() || a.getZSize() != b.getZSize()) {
++            return false;
++        }
++        if (a instanceof SubShape) {
++            SubShape a_l = (SubShape) a;
++            SubShape b_l = (SubShape) b;
++            return a_l.xMax == b_l.xMax &&
++                    a_l.yMax == b_l.yMax &&
++                    a_l.zMax == b_l.zMax &&
++                    a_l.xMin == b_l.xMin &&
++                    a_l.yMin == b_l.yMin &&
++                    a_l.zMin == b_l.zMin &&
++                    equals(a_l.parent, b_l.parent);
++        } else if (a instanceof BitSetDiscreteVoxelShape) {
++            BitSetDiscreteVoxelShape b_l = (BitSetDiscreteVoxelShape) b;
++            BitSetDiscreteVoxelShape a_l = (BitSetDiscreteVoxelShape) a;
++            return a_l.xMax == b_l.xMax &&
++                    a_l.yMax == b_l.yMax &&
++                    a_l.zMax == b_l.zMax &&
++                    a_l.xMin == b_l.xMin &&
++                    a_l.yMin == b_l.yMin &&
++                    a_l.zMin == b_l.zMin &&
++                    a_l.storage.equals(b_l.storage);
++        } else {
++            return a.equals(b);
++        }
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/impl/BlockStateCacheImpl.java b/src/main/java/malte0811/ferritecore/impl/BlockStateCacheImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad8e1d53065c7745b23d2f2bcd145c9fb86a9a2b
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/impl/BlockStateCacheImpl.java
+@@ -0,0 +1,147 @@
++package malte0811.ferritecore.impl;
++
++import com.google.common.base.Suppliers;
++import it.unimi.dsi.fastutil.objects.Object2ObjectOpenCustomHashMap;
++import malte0811.ferritecore.hash.ArrayVoxelShapeHash;
++import malte0811.ferritecore.hash.VoxelShapeHash;
++import net.minecraft.core.Direction;
++import net.minecraft.world.phys.shapes.SliceShape;
++import malte0811.ferritecore.util.Constants;
++import net.minecraft.world.level.block.state.BlockBehaviour.BlockStateBase;
++import net.minecraft.world.phys.shapes.ArrayVoxelShape;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.apache.commons.lang3.tuple.Pair;
++
++import javax.annotation.Nullable;
++import java.lang.invoke.MethodHandle;
++import java.lang.invoke.MethodHandles;
++import java.lang.reflect.Field;
++import java.util.Map;
++import java.util.function.Function;
++import java.util.function.Supplier;
++
++import net.minecraft.world.level.block.state.BlockBehaviour;
++
++public class BlockStateCacheImpl {
++    public static final Map<ArrayVoxelShape, ArrayVoxelShape> CACHE_COLLIDE = new Object2ObjectOpenCustomHashMap<>(
++            ArrayVoxelShapeHash.INSTANCE
++    );
++    // Maps a shape to the "canonical instance" of that shape and its side projections
++    public static final Map<VoxelShape, Pair<VoxelShape, VoxelShape[]>> CACHE_PROJECT =
++            new Object2ObjectOpenCustomHashMap<>(VoxelShapeHash.INSTANCE);
++
++    // Get the cache from a blockstate. Mixin does not handle private inner classes too well, so method handles and
++    // manual remapping it is
++    private static final Supplier<Function<BlockBehaviour.BlockStateBase, BlockBehaviour.BlockStateBase.Cache>> GET_CACHE = Suppliers.memoize(() -> {
++        try {
++            Field cacheField = BlockBehaviour.BlockStateBase.class.getDeclaredField(Constants.blockstateCacheFieldName);
++            cacheField.setAccessible(true);
++            MethodHandle getter = MethodHandles.lookup().unreflectGetter(cacheField);
++            return state -> {
++                try {
++                    return (BlockBehaviour.BlockStateBase.Cache) getter.invoke(state);
++                } catch (Throwable throwable) {
++                    throw new RuntimeException(throwable);
++                }
++                    };
++                } catch (NoSuchFieldException | IllegalAccessException e) {
++                    throw new RuntimeException(e);
++                }
++            });
++    // Is set to the previous cache used by a state before updating the cache. If the new cache has shapes equivalent to
++    // the ones in the old cache, we don't need to go through the map since the old one already had deduplicated shapes
++    private static final ThreadLocal<BlockBehaviour.BlockStateBase.Cache> LAST_CACHE = new ThreadLocal<>();
++
++    // Calls before the cache for <code>state</code> is (re-)populated
++    public static void deduplicateCachePre(BlockBehaviour.BlockStateBase state) {
++        LAST_CACHE.set(state.cache);
++    }
++
++    // Calls after the cache for <code>state</code> is (re-)populated
++    public static void deduplicateCachePost(BlockBehaviour.BlockStateBase state) {
++        BlockBehaviour.BlockStateBase.Cache newCache = state.cache;
++        if (newCache != null) {
++            final BlockBehaviour.BlockStateBase.Cache oldCache = LAST_CACHE.get();
++            deduplicateCollisionShape(newCache, oldCache);
++            deduplicateRenderShapes(newCache, oldCache);
++            LAST_CACHE.set(null);
++        }
++    }
++
++    private static void deduplicateCollisionShape(
++            BlockBehaviour.BlockStateBase.Cache newCache, @Nullable BlockBehaviour.BlockStateBase.Cache oldCache
++    ) {
++        VoxelShape dedupedCollisionShape;
++        if (oldCache != null && VoxelShapeHash.INSTANCE.equals(
++                oldCache.getCollisionShape(), newCache.getCollisionShape()
++        )) {
++            dedupedCollisionShape = oldCache.getCollisionShape();
++        } else {
++            dedupedCollisionShape = newCache.getCollisionShape();
++            if (dedupedCollisionShape instanceof ArrayVoxelShape) {
++                dedupedCollisionShape = (ArrayVoxelShape) CACHE_COLLIDE.computeIfAbsent(dedupedCollisionShape, Function.identity());
++            }
++        }
++        replaceInternals(dedupedCollisionShape, newCache.getCollisionShape());
++        newCache.setCollisionShape(dedupedCollisionShape);
++    }
++
++    private static void deduplicateRenderShapes(
++            BlockBehaviour.BlockStateBase.Cache newCache, @Nullable BlockBehaviour.BlockStateBase.Cache oldCache
++    ) {
++        final VoxelShape newRenderShape = getRenderShape(newCache.getCullingShape());
++        if (newRenderShape == null) {
++            return;
++        }
++        Pair<VoxelShape, VoxelShape[]> dedupedRenderShapes = null;
++        if (oldCache != null) {
++            final VoxelShape oldRenderShape = getRenderShape(oldCache.getCullingShape());
++            if (VoxelShapeHash.INSTANCE.equals(newRenderShape, oldRenderShape)) {
++                dedupedRenderShapes = Pair.of(oldRenderShape, oldCache.getCullingShape());
++            }
++        }
++        if (dedupedRenderShapes == null) {
++            // Who thought that this was a good interface for putIfAbsent…
++            Pair<VoxelShape, VoxelShape[]> newPair = Pair.of(newRenderShape, newCache.getCullingShape());
++            dedupedRenderShapes = CACHE_PROJECT.putIfAbsent(newRenderShape, newPair);
++            if (dedupedRenderShapes == null) {
++                dedupedRenderShapes = newPair;
++            }
++        }
++        replaceInternals(dedupedRenderShapes.getLeft(), newRenderShape);
++        newCache.setOcclusionShapes(dedupedRenderShapes.getRight());
++    }
++
++    private static void replaceInternals(VoxelShape toKeep, VoxelShape toReplace) {
++        if (toKeep instanceof ArrayVoxelShape && toReplace instanceof ArrayVoxelShape) {
++            replaceInternals((ArrayVoxelShape) toKeep, (ArrayVoxelShape) toReplace);
++        }
++    }
++
++    public static void replaceInternals(ArrayVoxelShape toKeep, ArrayVoxelShape toReplace) {
++        if (toKeep == toReplace) {
++            return;
++        }
++        // Mods have a tendency to keep their shapes in a custom cache, in addition to the blockstate cache. So removing
++        // duplicate shapes from the cache only fixes part of the problem. The proper fix would be to deduplicate the
++        // mod caches as well (or convince people to get rid of the larger ones), but that's not feasible. So: Accept
++        // that we can't do anything about shallow size and replace the internals with those used in the cache. This is
++        // not theoretically 100% safe since VSs can technically be modified after they are created, but handing out VSs
++        // that will be modified is unsafe in any case since a lot of vanilla code relies on VSs being immutable.
++        toReplace.setXPoints(toKeep.getXPoints());
++        toReplace.setYPoints(toKeep.getYPoints());
++        toReplace.setZPoints(toKeep.getZPoints());
++    }
++
++    @Nullable
++    private static VoxelShape getRenderShape(@Nullable VoxelShape[] projected) {
++        if (projected != null) {
++            for (VoxelShape side : projected) {
++                if (side instanceof SliceShape) {
++                    return ((SliceShape) side).shape;
++                }
++            }
++        }
++        return null;
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/impl/KeyValueConditionImpl.java b/src/main/java/malte0811/ferritecore/impl/KeyValueConditionImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..714887ad4afd95988b636b4c57f8aa72b5df3b4e
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/impl/KeyValueConditionImpl.java
+@@ -0,0 +1,88 @@
++package malte0811.ferritecore.impl;
++
++import com.google.common.base.Splitter;
++import net.minecraft.world.level.block.Block;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.block.state.StateDefinition;
++import net.minecraft.world.level.block.state.properties.Property;
++import org.apache.commons.lang3.tuple.Pair;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.function.Predicate;
++import java.util.stream.Collectors;
++
++public class KeyValueConditionImpl {
++    private static final Map<Pair<Property<?>, Comparable<?>>, Predicate<BlockState>> STATE_HAS_PROPERTY_CACHE = new ConcurrentHashMap<>();
++
++    /**
++     * A copy of {@link net.minecraft.client.renderer.block.model.multipart.KeyValueCondition#getPredicate(StateDefinition)}
++     * since targeting the correct line is near impossible
++     */
++    public static Predicate<BlockState> getPredicate(
++            StateDefinition<Block, BlockState> stateContainer, String key, String value, Splitter splitter
++    ) {
++        Property<?> property = stateContainer.getProperty(key);
++        if (property == null) {
++            throw new RuntimeException(String.format(
++                    "Unknown property '%s' on '%s'", key, stateContainer.getOwner().toString()
++            ));
++        } else {
++            String valueNoInvert = value;
++            boolean invert = !valueNoInvert.isEmpty() && valueNoInvert.charAt(0) == '!';
++            if (invert) {
++                valueNoInvert = valueNoInvert.substring(1);
++            }
++
++            List<String> matchedStates = splitter.splitToList(valueNoInvert);
++            if (matchedStates.isEmpty()) {
++                throw new RuntimeException(String.format(
++                        "Empty value '%s' for property '%s' on '%s'",
++                        value, key, stateContainer.getOwner().toString()
++                ));
++            } else {
++                Predicate<BlockState> isMatchedState;
++                if (matchedStates.size() == 1) {
++                    isMatchedState = getBlockStatePredicate(stateContainer, property, valueNoInvert, key, value);
++                } else {
++                    List<Predicate<BlockState>> subPredicates = matchedStates.stream()
++                            .map(subValue -> getBlockStatePredicate(stateContainer, property, subValue, key, value))
++                            .collect(Collectors.toList());
++                    // This line is the only functional change, but targeting it with anything but Overwrite appears to
++                    // be impossible
++                }
++
++                return invert ? isMatchedState.negate() : isMatchedState;
++            }
++        }
++    }
++
++    private static <T extends Comparable<T>>
++    Predicate<BlockState> getBlockStatePredicate(
++            StateDefinition<Block, BlockState> container,
++            Property<T> property,
++            String subValue,
++            String key,
++            String value
++    ) {
++        Optional<T> optional = property.getValue(subValue);
++        if (optional.isEmpty()) {
++            throw new RuntimeException(String.format(
++                    "Unknown value '%s' for property '%s' on '%s' in '%s'",
++                    subValue, key, container.getOwner().toString(), value
++            ));
++        } else {
++            T unwrapped = optional.get();
++            return STATE_HAS_PROPERTY_CACHE.computeIfAbsent(
++                    Pair.of(property, unwrapped),
++                    pair -> {
++                        Comparable<?> valueInt = pair.getRight();
++                        Property<?> propInt = pair.getLeft();
++                        return state -> state.getValue(propInt).equals(valueInt);
++                    }
++            );
++        }
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/impl/StateHolderImpl.java b/src/main/java/malte0811/ferritecore/impl/StateHolderImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..92313859bd2f64f03ae3fc0802645ec12e37f749
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/impl/StateHolderImpl.java
+@@ -0,0 +1,47 @@
++package malte0811.ferritecore.impl;
++
++import malte0811.ferritecore.classloading.FastImmutableMapDefiner;
++import malte0811.ferritecore.ducks.FastMapStateHolder;
++import malte0811.ferritecore.fastmap.FastMap;
++import malte0811.ferritecore.fastmap.table.CrashNeighborTable;
++import malte0811.ferritecore.fastmap.table.FastmapNeighborTable;
++import org.sugarcanemc.sugarcane.config.SugarcaneConfig;
++import net.minecraft.world.level.block.state.properties.Property;
++import java.util.Map;
++
++public class StateHolderImpl {
++    public static final ThreadLocal<Map<Map<Property<?>, Comparable<?>>, ?>> LAST_STATE_MAP = new ThreadLocal<>();
++    public static final ThreadLocal<FastMap<?>> LAST_FAST_STATE_MAP = new ThreadLocal<>();
++
++    /**
++     * Set up the {@link FastMap} used by the given {@link FastMapStateHolder} to handle neighbors and property lookups.
++     * This is called in a loop for each {@link net.minecraft.world.level.block.state.StateDefinition}, so all state holders of a given
++     * container will use the same {@link FastMap} instance.
++     */
++    public static <S>
++    void populateNeighbors(Map<Map<Property<?>, Comparable<?>>, S> states, FastMapStateHolder<S> holder) {
++        if (holder.getNeighborTable() != null) {
++            throw new IllegalStateException();
++        } else if (states == LAST_STATE_MAP.get()) {
++            // Use threadlocal state to use the same fast map for all states of one block
++            holder.setStateMap((FastMap<S>) LAST_FAST_STATE_MAP.get());
++        } else {
++            LAST_STATE_MAP.set(states);
++            FastMap<S> globalTable = new FastMap<>(
++                    holder.getVanillaPropertyMap().keySet(), states, SugarcaneConfig.COMPACT_FAST_MAP
++            );
++            holder.setStateMap(globalTable);
++            LAST_FAST_STATE_MAP.set(globalTable);
++        }
++        int index = holder.getStateMap().getIndexOf(holder.getVanillaPropertyMap());
++        holder.setStateIndex(index);
++        if (SugarcaneConfig.PROPERTY_MAP) {
++            holder.replacePropertyMap(FastImmutableMapDefiner.makeMap(holder));
++        }
++        if (SugarcaneConfig.POPULATE_NEIGHBOR_TABLE) {
++            holder.setNeighborTable(new FastmapNeighborTable<>(holder));
++        } else {
++            holder.setNeighborTable(CrashNeighborTable.getInstance());
++        }
++    }
++}
+diff --git a/src/main/java/malte0811/ferritecore/util/Constants.java b/src/main/java/malte0811/ferritecore/util/Constants.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..3154f662d62b386d37cbf46c9cfc25d8c06b4ac5
+--- /dev/null
++++ b/src/main/java/malte0811/ferritecore/util/Constants.java
+@@ -0,0 +1,6 @@
++package malte0811.ferritecore.util;
++
++public class Constants {
++    public static final String MODID = "ferritecore";
++    public static String blockstateCacheFieldName;
++}
+diff --git a/src/main/java/net/minecraft/Util.java b/src/main/java/net/minecraft/Util.java
+index 621c4b42185b3c65903408b6285ba56fa42e626a..d1309877b3dd6f18025beed9bde26d0f3ac0d2d5 100644
+--- a/src/main/java/net/minecraft/Util.java
++++ b/src/main/java/net/minecraft/Util.java
+@@ -310,6 +310,8 @@ public class Util {
+         return object;
+     }
+ 
++    public static <K> Strategy<K> identityHashStrategy() { return identityStrategy(); } // Sugarcane - port FerriteCore
++
+     public static <K> Strategy<K> identityStrategy() {
+         return (Strategy<K>) Util.IdentityStrategy.INSTANCE; // Paper - decompile fix
+     }
+diff --git a/src/main/java/net/minecraft/world/level/block/state/BlockBehaviour.java b/src/main/java/net/minecraft/world/level/block/state/BlockBehaviour.java
+index f34973be478de4f088a0593b45bd89e558a13609..d2a3cba196a940f54bb2b22fc82996f664bddaef 100644
+--- a/src/main/java/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/src/main/java/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -11,6 +11,8 @@ import java.util.function.Function;
+ import java.util.function.Predicate;
+ import java.util.function.ToIntFunction;
+ import javax.annotation.Nullable;
++
++import malte0811.ferritecore.impl.BlockStateCacheImpl;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.Direction;
+ import net.minecraft.core.Registry;
+@@ -624,7 +626,8 @@ public abstract class BlockBehaviour {
+         private final BlockBehaviour.StatePredicate hasPostProcess;
+         private final BlockBehaviour.StatePredicate emissiveRendering;
+         @Nullable
+-        protected BlockBehaviour.BlockStateBase.Cache cache;
++        public BlockBehaviour.BlockStateBase.Cache cache; // Sugarcane - protected -> public
++        public final BlockBehaviour.BlockStateBase.Cache getCache() { return this.cache; } // Sugarcane
+ 
+         protected BlockStateBase(Block block, ImmutableMap<Property<?>, Comparable<?>> propertyMap, MapCodec<BlockState> codec) {
+             super(block, propertyMap, codec);
+@@ -679,6 +682,7 @@ public abstract class BlockBehaviour {
+         // Tuinity end
+ 
+         public void initCache() {
++            BlockStateCacheImpl.deduplicateCachePre((BlockBehaviour.BlockStateBase) (Object) this); // Sugarcane - port FerriteCore
+             this.fluid = this.getBlock().getFluidState(this.asState()); // Paper - moved from getFluid()
+             this.isTicking = this.getBlock().isRandomlyTicking(this.asState()); // Paper - moved from isTicking()
+             if (!this.getBlock().hasDynamicShape()) {
+@@ -1040,7 +1044,7 @@ public abstract class BlockBehaviour {
+             return this.requiresCorrectToolForDrops;
+         }
+ 
+-        private static final class Cache {
++        public static final class Cache { // Sugarcane private -> public
+ 
+             private static final Direction[] DIRECTIONS = Direction.values();
+             private static final int SUPPORT_TYPE_COUNT = SupportType.values().length;
+@@ -1048,8 +1052,8 @@ public abstract class BlockBehaviour {
+             final boolean propagatesSkylightDown;
+             final int lightBlock;
+             @Nullable
+-            final VoxelShape[] occlusionShapes;
+-            protected final VoxelShape collisionShape;
++            public VoxelShape[] occlusionShapes; // Sugarcane - final -> non-final
++            protected VoxelShape collisionShape; // Sugarcane - final -> non-final
+             protected final boolean largeCollisionShape;
+             private final boolean[] faceSturdy;
+             protected final boolean isCollisionShapeFullBlock;
+@@ -1078,7 +1082,7 @@ public abstract class BlockBehaviour {
+                     }
+                 }
+ 
+-                this.collisionShape = block.getCollisionShape(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
++                        this.collisionShape = block.getCollisionShape(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
+                 if (!this.collisionShape.isEmpty() && block.getOffsetType() != BlockBehaviour.OffsetType.NONE) {
+                     throw new IllegalStateException(String.format("%s has a collision shape and an offset type, but is not marked as dynamicShape in its properties.", Registry.BLOCK.getKey(block)));
+                 } else {
+@@ -1112,6 +1116,17 @@ public abstract class BlockBehaviour {
+             private static int getFaceSupportIndex(Direction direction, SupportType shapeType) {
+                 return direction.ordinal() * BlockBehaviour.BlockStateBase.Cache.SUPPORT_TYPE_COUNT + shapeType.ordinal();
+             }
++
++            // Sugarcane start - port FerriteCore
++            public VoxelShape getCollisionShape() {
++                return this.collisionShape;
++            }
++
++            public void setCollisionShape(VoxelShape voxelShape) {
++                this.collisionShape = voxelShape;
++            }
++            // Sugarcane end
++
+         }
+     }
+ }
+diff --git a/src/main/java/net/minecraft/world/phys/shapes/ArrayVoxelShape.java b/src/main/java/net/minecraft/world/phys/shapes/ArrayVoxelShape.java
+index af1ef430e81cb9bdd749aa235577c63fa381f4c5..04684f71ceba2e541178e092fcafb19328f771bf 100644
+--- a/src/main/java/net/minecraft/world/phys/shapes/ArrayVoxelShape.java
++++ b/src/main/java/net/minecraft/world/phys/shapes/ArrayVoxelShape.java
+@@ -10,9 +10,20 @@ import net.minecraft.core.Direction;
+ import it.unimi.dsi.fastutil.doubles.AbstractDoubleList;
+ // Tuinity end
+ public class ArrayVoxelShape extends VoxelShape {
+-    private final DoubleList xs;
+-    private final DoubleList ys;
+-    private final DoubleList zs;
++    // Sugarcane start - port FerriteCore
++    public DoubleList xs;
++    public DoubleList ys;
++    public DoubleList zs;
++
++    public void setXPoints(DoubleList newPoints) { this.xs = newPoints; }
++    public void setYPoints(DoubleList newPoints) { this.ys = newPoints; }
++    public void setZPoints(DoubleList newPoints) { this.zs = newPoints; }
++
++    public DoubleList getXPoints() { return this.xs; }
++    public DoubleList getYPoints() { return this.ys; }
++
++    public DoubleList getZPoints() { return this.zs; }
++    // Sugarcane end
+ 
+     protected ArrayVoxelShape(DiscreteVoxelShape shape, double[] ds, double[] es, double[] fs) {
+         this(shape, (DoubleList)DoubleArrayList.wrap(Arrays.copyOf(ds, shape.getXSize() + 1)), (DoubleList)DoubleArrayList.wrap(Arrays.copyOf(es, shape.getYSize() + 1)), (DoubleList)DoubleArrayList.wrap(Arrays.copyOf(fs, shape.getZSize() + 1)));
+diff --git a/src/main/java/net/minecraft/world/phys/shapes/BitSetDiscreteVoxelShape.java b/src/main/java/net/minecraft/world/phys/shapes/BitSetDiscreteVoxelShape.java
+index a7333a0cb93e47ada1b65522d4d3dc8a95213a78..35d3d22cb2540be53a3b1e4d2628710dbc7af42a 100644
+--- a/src/main/java/net/minecraft/world/phys/shapes/BitSetDiscreteVoxelShape.java
++++ b/src/main/java/net/minecraft/world/phys/shapes/BitSetDiscreteVoxelShape.java
+@@ -4,13 +4,15 @@ import java.util.BitSet;
+ import net.minecraft.core.Direction;
+ 
+ public final class BitSetDiscreteVoxelShape extends DiscreteVoxelShape {
+-    private final BitSet storage;
+-    private int xMin;
+-    private int yMin;
+-    private int zMin;
+-    private int xMax;
+-    private int yMax;
+-    private int zMax;
++    // Sugarcane start - port FerriteCore
++    public final BitSet storage;
++    public int xMin;
++    public int yMin;
++    public int zMin;
++    public int xMax;
++    public int yMax;
++    public int zMax;
++    // Sugarcane end
+ 
+     public BitSetDiscreteVoxelShape(int sizeX, int sizeY, int sizeZ) {
+         super(sizeX, sizeY, sizeZ);
+diff --git a/src/main/java/net/minecraft/world/phys/shapes/SliceShape.java b/src/main/java/net/minecraft/world/phys/shapes/SliceShape.java
+index cf469f9daa81da8bc330c9cac7e813db87f9f9af..a69b9e654c0b724f7fcb946cde1763b8fee798cf 100644
+--- a/src/main/java/net/minecraft/world/phys/shapes/SliceShape.java
++++ b/src/main/java/net/minecraft/world/phys/shapes/SliceShape.java
+@@ -4,8 +4,9 @@ import it.unimi.dsi.fastutil.doubles.DoubleList;
+ import net.minecraft.core.Direction;
+ 
+ public class SliceShape extends VoxelShape {
+-    private final VoxelShape delegate;
++    public final VoxelShape delegate; // Sugarcane - private final -> public
+     private final Direction.Axis axis;
++    public Direction.Axis getAxis() { return this.axis; } // Sugarcane - port FerriteCore
+     private static final DoubleList SLICE_COORDS = new CubePointRange(1);
+ 
+     public SliceShape(VoxelShape shape, Direction.Axis axis, int sliceWidth) {
+diff --git a/src/main/java/net/minecraft/world/phys/shapes/SubShape.java b/src/main/java/net/minecraft/world/phys/shapes/SubShape.java
+index 647eaa159e0e1ecd28ec46a033dcee650a89edca..0a4cd2cf1a76ddbb59919dbfd50010c01c43178d 100644
+--- a/src/main/java/net/minecraft/world/phys/shapes/SubShape.java
++++ b/src/main/java/net/minecraft/world/phys/shapes/SubShape.java
+@@ -4,13 +4,15 @@ import net.minecraft.core.Direction;
+ import net.minecraft.util.Mth;
+ 
+ public final class SubShape extends DiscreteVoxelShape {
+-    private final DiscreteVoxelShape parent;
+-    private final int startX;
+-    private final int startY;
+-    private final int startZ;
+-    private final int endX;
+-    private final int endY;
+-    private final int endZ;
++    // Sugarcane start - port FerriteCore
++    public final DiscreteVoxelShape parent;
++    public final int startX;
++    public final int startY;
++    public final int startZ;
++    public final int endX;
++    public final int endY;
++    public final int endZ;
++    // Sugarcane end
+ 
+     protected SubShape(DiscreteVoxelShape parent, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+         super(maxX - minX, maxY - minY, maxZ - minZ);
+diff --git a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
+index 604b1fa59c6228971c75b1e5988789655df47946..f94699bab2e09c7e1d122fe2b3f8ecd963751057 100644
+--- a/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
++++ b/src/main/java/org/sugarcanemc/sugarcane/config/SugarcaneConfig.java
+@@ -186,6 +186,15 @@ public class SugarcaneConfig {
+ 		return config.getString(path, config.getString(path));
+ }
+ 
++public static boolean PROPERTY_MAP = true;
++public static boolean COMPACT_FAST_MAP = true;
++public static boolean POPULATE_NEIGHBOR_TABLE = true;
++    private static void ferritecore() {
++	    PROPERTY_MAP = getBoolean("ferritecore.replacePropertyMap", PROPERTY_MAP);
++		COMPACT_FAST_MAP = getBoolean("ferritecore.compactFastMap", COMPACT_FAST_MAP);
++	    POPULATE_NEIGHBOR_TABLE = getBoolean("ferritecore.populateNeighborTable", POPULATE_NEIGHBOR_TABLE);
++}
++
+ public static boolean logPlayerLoginLoc = true;
+ 	private static void general() {
+ 		logPlayerLoginLoc = getBoolean("settings.log-player-login-location", logPlayerLoginLoc);
