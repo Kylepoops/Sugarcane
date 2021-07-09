@@ -8,7 +8,7 @@
     <a href="https://sugarcanemc.org/">
         <img alt="Website" src="https://img.shields.io/website?style=for-the-badge&up_color=red&up_message=SugarcaneMC&url=https%3A%2F%2Fsugarcanemc.org%2F">
     </a>
-</div>
+</div> 
 
 # We use patches from the following projects
 
